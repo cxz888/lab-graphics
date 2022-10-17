@@ -10,10 +10,10 @@ edition = "2021"
 nalgebra-glm = "0.17"
 minifb = "0.23"
 rgb = "0.8"
-scanlex = "0.1"
 scanner-rust = "2.0"
-# slab = "0.4"
 anyhow = "1"
+tobj = "3.2"
+itertools = "0.10"
 # thiserror = "1"
 
 # anyhow = "1"
@@ -55,6 +55,9 @@ harness = false
 name = "advanced"
 harness = false
 
-[profile.release]
+[[bench]]
+name = "rasterize"
+harness = false
 
-# debug = true
+[profile.release]
+debug = true

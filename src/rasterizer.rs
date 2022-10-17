@@ -1,28 +1,35 @@
-use crate::{object::Object, triangle::Triangle};
+use crate::{
+    object::Object,
+    shader::{EmptyShader, Payload, Shader},
+    triangle::Triangle,
+};
 use nalgebra_glm::{Mat4, Vec2, Vec3, Vec4};
 use rgb::alt::BGRA8;
 
-#[derive(Default)]
-pub struct Rasterizer {
+pub struct Rasterizer<S: Shader = EmptyShader> {
     width: usize,
     height: usize,
     frame_buf: Vec<BGRA8>,
     depth_buf: Vec<f32>,
     view: Mat4,
     projection: Mat4,
+    pub shader: S,
 }
 
 // 实用函数
-impl Rasterizer {
-    pub fn new(width: usize, height: usize) -> Self {
+impl<S: Shader> Rasterizer<S> {
+    pub fn new(width: usize, height: usize, shader: S) -> Self {
         Self {
             width,
             height,
             frame_buf: vec![Default::default(); width * height],
             depth_buf: vec![f32::NEG_INFINITY; width * height],
-            ..Default::default()
+            view: Default::default(),
+            projection: Default::default(),
+            shader,
         }
     }
+
     #[inline]
     pub fn clear(&mut self) {
         self.frame_buf.fill(Default::default());
@@ -41,77 +48,100 @@ impl Rasterizer {
     }
 
     #[inline]
-    pub fn get_index(&self, x: usize, y: usize) -> Option<usize> {
-        if x >= self.width || y >= self.height {
-            return None;
-        }
+    pub fn get_index(&self, x: usize, y: usize) -> usize {
         let index = (self.height - 1 - y) * self.width + x;
-        return Some(index);
+        return index;
     }
 }
 
 // 3D 光栅化
-impl Rasterizer {
-    pub fn draw(&mut self, object: &Object, z_near: f32, z_far: f32) {
-        let mvp = self.projection * self.view * object.model;
-        for [i, j, k] in object.indices.iter().copied() {
+impl<S: Shader> Rasterizer<S> {
+    pub fn draw(&mut self, object: &Object) {
+        let vp = self.projection * self.view;
+        for t_id in 0..object.indices.len() {
+            let [i, j, k] = object.indices[t_id];
+            let [ni, nj, nk] = object.normal_indices[t_id];
             #[inline]
             fn to_homogeneous(v3: Vec3, w: f32) -> Vec4 {
                 Vec4::new(v3.x, v3.y, v3.z, w)
             }
+            let model_pos = [
+                object.model * to_homogeneous(object.vertices[i], 1.),
+                object.model * to_homogeneous(object.vertices[j], 1.),
+                object.model * to_homogeneous(object.vertices[k], 1.),
+            ];
             let mut t = Triangle {
-                v: [
-                    mvp * to_homogeneous(object.vertices[i], 1.),
-                    mvp * to_homogeneous(object.vertices[j], 1.),
-                    mvp * to_homogeneous(object.vertices[k], 1.),
+                v: [vp * model_pos[0], vp * model_pos[1], vp * model_pos[2]],
+                color: [
+                    object.vertex_color[i],
+                    object.vertex_color[j],
+                    object.vertex_color[k],
                 ],
-                color: [object.colors[i], object.colors[j], object.colors[k]],
+                normal: [object.normals[ni], object.normals[nj], object.normals[nk]],
                 ..Default::default()
             };
             // 齐次除法将 (x,y,z) 限定在 [-1,1]
             // 然后将 x、y 映射到屏幕坐标系上
             // z 的处理比较奇怪，暂且保留，后续也许可以去掉
-            // w 没有进行齐次除法，因为按之前的计算这里的 w 保存了 mv 变换之后的真实 z 值\
-            let f1 = (z_far - z_near) / 2.;
-            let f2 = (z_far + z_near) / 2.;
+            // w 没有进行齐次除法，因为按之前的计算这里的 w 保存了 mv 变换之后的真实 z 值
             for p in t.v.iter_mut() {
                 p.x = 0.5 * self.width as f32 * (p.x / p.w + 1.);
                 p.y = 0.5 * self.height as f32 * (p.y / p.w + 1.);
-                p.z = p.z / p.w * f1 + f2;
             }
-            self.rasterize_triangle(&t);
+            self.rasterize_triangle(&t, &model_pos);
         }
     }
     /// 将 3D 三角形光栅化到屏幕上。
     ///
     /// 注意 `t` 的 x y 坐标已经表示为屏幕坐标
-    fn rasterize_triangle(&mut self, t: &Triangle) {
+    fn rasterize_triangle(&mut self, t: &Triangle, model_pos: &[Vec4; 3]) {
         // println!("{:?}", t.v);
         let bbox = t.bounding_box();
         let (left, top, right, bottom) = (
-            bbox.0.clamp(0., self.width as f32) as usize,
-            bbox.1.clamp(0., self.height as f32) as usize,
-            bbox.2.clamp(0., self.width as f32) as usize,
-            bbox.3.clamp(0., self.height as f32) as usize,
+            bbox.0.clamp(0., (self.width - 1) as f32) as usize,
+            bbox.1.clamp(0., (self.height - 1) as f32) as usize,
+            bbox.2.clamp(0., (self.width - 1) as f32) as usize,
+            bbox.3.clamp(0., (self.height - 1) as f32) as usize,
         );
-        for px in left..=right {
-            for py in bottom..=top {
+        for py in bottom..=top {
+            for px in left..=right {
                 let (alpha, beta, gamma) = t.barycentric_coordinates(px as f32, py as f32);
                 if !Triangle::inside_triangle(alpha, beta, gamma) {
                     continue;
                 }
-                let z_r = 1.0 / (alpha / t.v[0].w + beta / t.v[1].w + gamma / t.v[2].w);
+                // 透视校正插值
+                let z = 1.0 / (alpha / t.v[0].w + beta / t.v[1].w + gamma / t.v[2].w);
+                fn to_vec3(color: BGRA8) -> Vec3 {
+                    Vec3::new(color.b as f32, color.g as f32, color.r as f32)
+                }
+                macro_rules! interp {
+                    ($p0:expr,$p1:expr,$p2:expr) => {
+                        z * (alpha * $p0 / t.v[0].w
+                            + beta * $p1 / t.v[1].w
+                            + gamma * $p2 / t.v[2].w)
+                    };
+                }
+                let index = self.get_index(px, py);
+                if self.depth_buf[index] < z {
+                    let interp_color: Vec3 = interp!(
+                        to_vec3(t.color[0]),
+                        to_vec3(t.color[1]),
+                        to_vec3(t.color[2])
+                    );
+                    let interp_normal: Vec3 =
+                        interp!(t.normal[0], t.normal[1], t.normal[2]).normalize();
+                    let interp_texture: Vec2 = interp!(t.texture[0], t.texture[1], t.texture[2]);
+                    let interp_view_pos: Vec4 = interp!(model_pos[0], model_pos[1], model_pos[2]);
+                    let payload = Payload {
+                        color: interp_color,
+                        normal: interp_normal,
+                        point: Vec3::new(interp_view_pos.x, interp_view_pos.y, interp_view_pos.z),
+                        tex_coords: interp_texture,
+                    };
+                    let color = self.shader.shading(&payload);
 
-                // println!("w_r: {z_r}, z_itp: {z_itp}");
-                // println!(
-                //     "z_ori[0]: {}, [1]: {}, [2]: {}",
-                //     t.v[0].w, t.v[1].w, t.v[2].w
-                // );
-                if let Some(index) = self.get_index(px, py) {
-                    if self.depth_buf[index] < z_r {
-                        self.depth_buf[index] = z_r;
-                        self.frame_buf[index] = t.average_color();
-                    }
+                    self.depth_buf[index] = z;
+                    self.frame_buf[index] = color;
                 }
             }
         }
@@ -119,7 +149,7 @@ impl Rasterizer {
 }
 
 // builder 相关
-impl Rasterizer {
+impl<S: Shader> Rasterizer<S> {
     pub fn view(&mut self, view: Mat4) -> &mut Self {
         self.view = view;
         self
@@ -131,7 +161,7 @@ impl Rasterizer {
 }
 
 // 基本原语，包括像素、直线
-impl Rasterizer {
+impl<S: Shader> Rasterizer<S> {
     #[inline]
     pub fn set_pixel(&mut self, x: usize, y: usize, color: BGRA8) {
         if x >= self.width || y >= self.height {
@@ -149,7 +179,7 @@ impl Rasterizer {
     #[inline]
     pub fn draw_line(&mut self, from: Vec2, to: Vec2, color: BGRA8) {
         /// DDA，数值微分算法
-        fn _dda(rst: &mut Rasterizer, from: Vec2, to: Vec2, color: BGRA8) {
+        fn _dda<S: Shader>(rst: &mut Rasterizer<S>, from: Vec2, to: Vec2, color: BGRA8) {
             let (mut x, mut y) = (from.x, from.y);
             let (dx, dy) = (to.x - x, to.y - y);
             let eps = 1.0 / dx.abs().max(dy.abs());
@@ -161,7 +191,12 @@ impl Rasterizer {
             }
         }
         /// 中点 Bresenham 算法
-        fn bresenham_center(rst: &mut Rasterizer, from: Vec2, to: Vec2, color: BGRA8) {
+        fn bresenham_center<S: Shader>(
+            rst: &mut Rasterizer<S>,
+            from: Vec2,
+            to: Vec2,
+            color: BGRA8,
+        ) {
             let (x0, y0) = (from.x as i32, from.y as i32);
             let (x1, y1) = (to.x as i32, to.y as i32);
 
@@ -228,7 +263,7 @@ impl Rasterizer {
             }
         }
         /// 改进 Bresenham 算法。当前的实现慢于上面的中点 Bresenham 算法
-        fn _bresenham(rst: &mut Rasterizer, from: Vec2, to: Vec2, color: BGRA8) {
+        fn _bresenham<S: Shader>(rst: &mut Rasterizer<S>, from: Vec2, to: Vec2, color: BGRA8) {
             let (x0, y0) = (from.x as i32, from.y as i32);
             let (x1, y1) = (to.x as i32, to.y as i32);
 
@@ -312,7 +347,7 @@ impl Rasterizer {
 }
 
 // 复杂图形，包括双曲线和多边形
-impl Rasterizer {
+impl<S: Shader> Rasterizer<S> {
     /// 绘制以原点为中心点，焦点在 y 轴上的双曲线
     ///
     /// 需满足 a<b 以保证渐近线斜率小于 1
@@ -370,7 +405,7 @@ impl Rasterizer {
         // 注意，以下算法都假定输入至少三个顶点，也就是至少要构成多边形
         assert!(vertices.len() >= 3);
         /// x 扫描线算法
-        fn _x_scan(rst: &mut Rasterizer, vert: &[Vec2], color: BGRA8) {
+        fn _x_scan<S: Shader>(rst: &mut Rasterizer<S>, vert: &[Vec2], color: BGRA8) {
             // 限制边界为 0~height
             let mut y_min = rst.height as f32;
             let mut y_max = 0.0f32;
@@ -429,7 +464,7 @@ impl Rasterizer {
             }
         }
         /// 有效边表 (Active Edge Table, AET) 算法
-        fn aet(rst: &mut Rasterizer, vert: &[Vec2], color: BGRA8) {
+        fn aet<S: Shader>(rst: &mut Rasterizer<S>, vert: &[Vec2], color: BGRA8) {
             struct Edge {
                 from: Vec2,
                 to_y: f32,
@@ -522,7 +557,7 @@ mod test {
     const WIDTH: usize = 800;
     const HEIGHT: usize = 800;
     use super::*;
-    use crate::color;
+    use crate::{color, transform};
 
     fn show(buffer: &[u32]) {
         use minifb::{Key, Window, WindowOptions};
@@ -540,7 +575,7 @@ mod test {
         const WIDTH: usize = 800;
         const HEIGHT: usize = 800;
 
-        let mut rst = Rasterizer::new(WIDTH, HEIGHT);
+        let mut rst = Rasterizer::new(WIDTH, HEIGHT, EmptyShader);
 
         let p0 = vec2(400., 400.);
 
@@ -564,7 +599,7 @@ mod test {
         use crate::color;
         use nalgebra_glm::vec2;
 
-        let mut rst = Rasterizer::new(WIDTH, HEIGHT);
+        let mut rst = Rasterizer::new(WIDTH, HEIGHT, EmptyShader);
 
         let vertices = [
             vec2(10., 10.),
@@ -600,7 +635,7 @@ mod test {
         const WIDTH: usize = 800;
         const HEIGHT: usize = 800;
 
-        let mut rst = Rasterizer::new(WIDTH, HEIGHT);
+        let mut rst = Rasterizer::new(WIDTH, HEIGHT, EmptyShader);
 
         let mut vertices = Vec::with_capacity(100);
         vertices.push(vec2(600., 300.));
@@ -626,5 +661,55 @@ mod test {
         }
         rst.draw_polygon(&vertices, color::RED);
         show(rst.data());
+    }
+
+    #[test]
+    fn test_interplote() {
+        let width = 800;
+        let height = 800;
+        let z_near = 0.1;
+        let z_far = 50.;
+
+        let mvp = transform::perspective(45., 1., z_near, z_far)
+            * transform::view(Vec3::new(0., 0., 5.), 0., 0.)
+            * transform::model(0., 0., 0., 2.5);
+
+        // mvp 变换
+        let mut points = [
+            mvp * Vec4::new(-2., 2., -2., 1.),
+            mvp * Vec4::new(2., 2., -2., 1.),
+            mvp * Vec4::new(0., 0., -5., 1.),
+        ];
+        println!("mvp 变换后：");
+        points.iter().for_each(|p| {
+            println!("{:?}", p.as_slice());
+        });
+        println!();
+
+        // 齐次除法
+        for p in points.iter_mut() {
+            p.x /= p.w;
+            p.y /= p.w;
+            p.z /= p.w;
+        }
+        println!("齐次除法后：");
+        points.iter().for_each(|p| {
+            println!("{:?}", p.as_slice());
+        });
+        println!();
+
+        // viewport 变换
+        let f1 = (z_far - z_near) / 2.;
+        let f2 = -(z_far + z_near) / 2.;
+        for p in points.iter_mut() {
+            p.x = 0.5 * (p.x + 1.) * width as f32;
+            p.y = 0.5 * (p.y + 1.) * height as f32;
+            p.z = p.w * f1 + f2;
+        }
+        println!("viewport 变换：");
+        points.iter().for_each(|p| {
+            println!("{:?}", p.as_slice());
+        });
+        println!();
     }
 }

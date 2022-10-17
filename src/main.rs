@@ -1,75 +1,15 @@
 #![cfg_attr(test, allow(unused))]
 
-pub mod color;
-pub mod object;
-pub mod rasterizer;
-pub mod transform;
-pub mod triangle;
-
-use object::Object;
-use rasterizer::Rasterizer;
+use lab_graphics::object::Object;
+use lab_graphics::rasterizer::Rasterizer;
+use lab_graphics::shader::{Light, PhongShader};
+use lab_graphics::{color, transform};
 
 use minifb::{Key, Window, WindowOptions};
-use nalgebra_glm::{Mat4, Vec3};
+use nalgebra_glm::Vec3;
 
 const WIDTH: usize = 800;
 const HEIGHT: usize = 800;
-
-/// 模型变换，将原始物体摆放到希望的位置上
-///
-/// 这里仅将其按 z 轴旋转。体现在最终结果上应该是顺时针、逆时针旋转
-///
-/// `angle` 以角度输入
-fn get_model(offset_x: f32, offset_y: f32, offset_z: f32) -> Mat4 {
-    transform::tranlation(offset_x, offset_y, offset_z)
-}
-
-/// 视图变换，将视点移至原点，朝向 -z 方向，上方向为 y 方向。
-fn get_view(eye_pos: Vec3, angle_alpha: f32, angle_beta: f32) -> Mat4 {
-    let t_view = transform::tranlation(-eye_pos[0], -eye_pos[1], -eye_pos[2]);
-    let a = angle_alpha.to_radians();
-    let b = angle_beta.to_radians();
-    let g = Vec3::new(-b.cos() * a.sin(), b.sin(), -b.cos() * a.cos());
-    let t = Vec3::new(a.sin() * b.sin(), b.cos(), a.cos() * b.sin());
-    let g_t = g.cross(&t);
-    #[rustfmt::skip]
-    let r_view = Mat4::new(
-        g_t.x, g_t.y, g_t.z, 0.,
-        t.x, t.y, t.z, 0.,
-        -(g.x), -(g.y), -(g.z), 0.,
-        0., 0., 0., 1.,
-    );
-    r_view * t_view
-}
-
-/// 投影变换，投影结果位于 \[-1,1\]^3 的标准立方体之间。这里是透视投影。
-///
-/// `fovy` y 轴视域角度，以角度输入，`aspect` 长宽比，z_near、z_far 分别是近远平面的**距离**
-///
-/// 注意在该种实现中，投影后的齐次坐标的 `w` 项是投影前的 `z` 坐标
-fn get_projection(fovy: f32, aspect: f32, z_near: f32, z_far: f32) -> Mat4 {
-    let fovy = fovy.to_radians();
-
-    let (zn, zf) = (-z_near, -z_far);
-    let t = -(fovy / 2.).tan() * zn;
-    let r = aspect * t;
-
-    #[rustfmt::skip]
-    let ortho: Mat4 = Mat4::new(
-        1./r, 0., 0., 0.,
-        0., 1./t, 0., 0.,
-        0., 0., 2./(zn-zf), -(zn+zf)/(zn-zf),
-        0., 0., 0., 1.
-    );
-    #[rustfmt::skip]
-    let persp2ortho: Mat4 = Mat4::new(
-        zn, 0., 0., 0.,
-        0., zn, 0., 0.,
-        0., 0., zn+zf, -zn*zf,
-        0., 0., 1., 0.
-    );
-    ortho * persp2ortho
-}
 
 fn response_keyboard(
     window: &Window,
@@ -77,8 +17,8 @@ fn response_keyboard(
     angle_alpha: &mut f32,
     angle_beta: &mut f32,
 ) -> bool {
-    const DELTA_ANGLE_ALPHA: f32 = 1.0;
-    const DELTA_ANGLE_BETA: f32 = 0.5;
+    const DELTA_ANGLE_ALPHA: f32 = 2.0;
+    const DELTA_ANGLE_BETA: f32 = 1.0;
     const VELOCITY: f32 = 1.0;
     const DELTA_Y: f32 = 1.0;
     let mut should_print = false;
@@ -132,24 +72,58 @@ fn response_keyboard(
 }
 
 fn main() {
-    let z_near = 1.;
+    let z_near = 0.1;
     let z_far = 50.;
 
+    let lights = vec![
+        Light {
+            source: Vec3::new(-20., 20., -20.),
+            intensity: Vec3::new(500., 500., 500.),
+        },
+        Light {
+            source: Vec3::new(20., 20., -20.),
+            intensity: Vec3::new(500., 500., 500.),
+        },
+        Light {
+            source: Vec3::new(0., 30., -50.0),
+            intensity: Vec3::new(400., 400., 400.),
+        },
+    ];
+    let diffuse_coeff = Vec3::new(0.005, 0.005, 0.005);
+    let amb_coeff = Vec3::new(0.005, 0.005, 0.005);
+    let amb_intensity = Vec3::new(10., 10., 10.);
+    let spec_coeff = Vec3::new(0.9, 0.9, 0.9);
+    let spec_exp = 150;
+
     // 相机位置、水平角和仰角。
-    let mut eye_pos = Vec3::new(0., 0., 20.);
-    let mut angle_alpha = 0.;
-    let mut angle_beta = 0.;
-    let mut rst = Rasterizer::new(WIDTH, HEIGHT);
-    rst.view(get_view(eye_pos, angle_alpha, angle_beta))
-        .projection(get_projection(45., 1., z_near, z_far));
+    let mut eye_pos = Vec3::new(28., 21., 35.34);
+    let mut angle_alpha = 40.;
+    let mut angle_beta = -10.;
+
+    let phong_shader = PhongShader::new(
+        eye_pos,
+        lights,
+        diffuse_coeff,
+        amb_coeff,
+        amb_intensity,
+        spec_coeff,
+        spec_exp,
+    );
+
+    let mut rst = Rasterizer::new(WIDTH, HEIGHT, phong_shader);
+    rst.view(transform::view(eye_pos, angle_alpha, angle_beta))
+        .projection(transform::perspective(45., 1., z_near, z_far));
 
     let tetra = Object::load_obj("model/tetrahedron.obj")
         .unwrap()
-        .model(get_model(0., 0., 0.));
-    let ground = Object::load_obj("model/ground.obj")
+        .model(transform::model(0., 0., 0., 1.));
+    let spot = Object::load_obj("model/spot_triangulated_good.obj")
         .unwrap()
-        .model(get_model(0., 0., 0.));
-    let objects = vec![tetra, ground];
+        .model(transform::model(0., 0., 0., 2.5));
+    let cube = Object::load_obj("model/cube.obj")
+        .unwrap()
+        .model(transform::model(-20., 0., 0., 1.0));
+    let objects = vec![tetra, spot, cube];
 
     let mut window = Window::new("Graphic Lab", WIDTH, HEIGHT, WindowOptions::default()).unwrap();
     // 限制至多为 60fps
@@ -157,9 +131,10 @@ fn main() {
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
         rst.clear();
-        rst.view(get_view(eye_pos, angle_alpha, angle_beta));
+        rst.view(transform::view(eye_pos, angle_alpha, angle_beta));
+        rst.shader.eye_pos(eye_pos);
         for obj in &objects {
-            rst.draw(obj, z_near, z_far);
+            rst.draw(obj);
         }
         rst.draw_crosshair(20, color::RED);
         window

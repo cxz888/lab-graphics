@@ -1,5 +1,3 @@
-use std::ops::RangeInclusive;
-
 use nalgebra_glm::{Vec2, Vec3, Vec4};
 use rgb::alt::BGRA8;
 
@@ -19,6 +17,7 @@ impl Triangle {
     /// 返回三角形平面投影的最小包围盒
     ///
     /// 按 left, top, right bottom 顺序返回
+    #[inline]
     pub fn bounding_box(&self) -> (f32, f32, f32, f32) {
         let left = self.v[0].x.min(self.v[1].x).min(self.v[2].x);
         let right = self.v[0].x.max(self.v[1].x).max(self.v[2].x);
@@ -38,8 +37,8 @@ impl Triangle {
     /// 根据重心坐标判断一个点是否在三角形内部
     #[inline]
     pub fn inside_triangle(alpha: f32, beta: f32, gamma: f32) -> bool {
-        const INSIDE: RangeInclusive<f32> = 0.0..=1.0;
-        return INSIDE.contains(&alpha) && INSIDE.contains(&beta) && INSIDE.contains(&gamma);
+        // 重心坐标任意一个为负即说明在外部
+        return alpha >= 0. && beta >= 0. && gamma >= 0.;
     }
 
     pub fn average_color(&self) -> BGRA8 {
