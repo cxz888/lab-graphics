@@ -5,8 +5,8 @@ use lab_graphics::rasterizer::Rasterizer;
 use lab_graphics::shader::{Light, PhongShader};
 use lab_graphics::{color, transform};
 
+use glam::Vec3;
 use minifb::{Key, Window, WindowOptions};
-use nalgebra_glm::Vec3;
 
 const WIDTH: usize = 800;
 const HEIGHT: usize = 800;
@@ -123,7 +123,7 @@ fn main() {
     let cube = Object::load_obj("model/cube.obj")
         .unwrap()
         .model(transform::model(-20., 0., 0., 1.0));
-    let objects = vec![tetra, spot, cube];
+    let objects = vec![spot];
 
     let mut window = Window::new("Graphic Lab", WIDTH, HEIGHT, WindowOptions::default()).unwrap();
     // 限制至多为 60fps
@@ -147,4 +147,12 @@ fn main() {
             println!();
         }
     }
+}
+
+#[test]
+fn test_as() {
+    let a: f32 = 1e30;
+    let b = a as u8;
+    let c = a as usize;
+    println!("{b} {c}");
 }

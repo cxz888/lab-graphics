@@ -3,7 +3,7 @@ use crate::{
     shader::{EmptyShader, Payload, Shader},
     triangle::Triangle,
 };
-use nalgebra_glm::{Mat4, Vec2, Vec3, Vec4};
+use glam::{Mat4, Vec2, Vec3, Vec4};
 use rgb::alt::BGRA8;
 
 pub struct Rasterizer<S: Shader = EmptyShader> {
@@ -61,14 +61,11 @@ impl<S: Shader> Rasterizer<S> {
         for t_id in 0..object.indices.len() {
             let [i, j, k] = object.indices[t_id];
             let [ni, nj, nk] = object.normal_indices[t_id];
-            #[inline]
-            fn to_homogeneous(v3: Vec3, w: f32) -> Vec4 {
-                Vec4::new(v3.x, v3.y, v3.z, w)
-            }
+            object.vertices[i].extend(1.);
             let model_pos = [
-                object.model * to_homogeneous(object.vertices[i], 1.),
-                object.model * to_homogeneous(object.vertices[j], 1.),
-                object.model * to_homogeneous(object.vertices[k], 1.),
+                object.model * object.vertices[i].extend(1.),
+                object.model * object.vertices[j].extend(1.),
+                object.model * object.vertices[k].extend(1.),
             ];
             let mut t = Triangle {
                 v: [vp * model_pos[0], vp * model_pos[1], vp * model_pos[2]],
@@ -80,9 +77,8 @@ impl<S: Shader> Rasterizer<S> {
                 normal: [object.normals[ni], object.normals[nj], object.normals[nk]],
                 ..Default::default()
             };
-            // 齐次除法将 (x,y,z) 限定在 [-1,1]
+            // 齐次除法将 (x,y) 限定在 [-1,1]
             // 然后将 x、y 映射到屏幕坐标系上
-            // z 的处理比较奇怪，暂且保留，后续也许可以去掉
             // w 没有进行齐次除法，因为按之前的计算这里的 w 保存了 mv 变换之后的真实 z 值
             for p in t.v.iter_mut() {
                 p.x = 0.5 * self.width as f32 * (p.x / p.w + 1.);
@@ -98,10 +94,10 @@ impl<S: Shader> Rasterizer<S> {
         // println!("{:?}", t.v);
         let bbox = t.bounding_box();
         let (left, top, right, bottom) = (
-            bbox.0.clamp(0., (self.width - 1) as f32) as usize,
-            bbox.1.clamp(0., (self.height - 1) as f32) as usize,
-            bbox.2.clamp(0., (self.width - 1) as f32) as usize,
-            bbox.3.clamp(0., (self.height - 1) as f32) as usize,
+            (bbox.0 as usize).min(self.width - 1),
+            (bbox.1 as usize).min(self.height - 1),
+            (bbox.2 as usize).min(self.width - 1),
+            (bbox.3 as usize).min(self.height - 1),
         );
         for py in bottom..=top {
             for px in left..=right {
@@ -128,14 +124,13 @@ impl<S: Shader> Rasterizer<S> {
                         to_vec3(t.color[1]),
                         to_vec3(t.color[2])
                     );
-                    let interp_normal: Vec3 =
-                        interp!(t.normal[0], t.normal[1], t.normal[2]).normalize();
+                    let interp_normal: Vec3 = interp!(t.normal[0], t.normal[1], t.normal[2]);
                     let interp_texture: Vec2 = interp!(t.texture[0], t.texture[1], t.texture[2]);
-                    let interp_view_pos: Vec4 = interp!(model_pos[0], model_pos[1], model_pos[2]);
+                    let interp_model_pos: Vec4 = interp!(model_pos[0], model_pos[1], model_pos[2]);
                     let payload = Payload {
                         color: interp_color,
                         normal: interp_normal,
-                        point: Vec3::new(interp_view_pos.x, interp_view_pos.y, interp_view_pos.z),
+                        point: interp_model_pos.truncate(),
                         tex_coords: interp_texture,
                     };
                     let color = self.shader.shading(&payload);
@@ -570,7 +565,7 @@ mod test {
 
     #[test]
     fn test_draw_line() {
-        use nalgebra_glm::vec2;
+        use glam::vec2;
 
         const WIDTH: usize = 800;
         const HEIGHT: usize = 800;
@@ -597,7 +592,7 @@ mod test {
     #[test]
     fn test_draw_polygon1() {
         use crate::color;
-        use nalgebra_glm::vec2;
+        use glam::vec2;
 
         let mut rst = Rasterizer::new(WIDTH, HEIGHT, EmptyShader);
 
@@ -630,7 +625,7 @@ mod test {
     #[test]
     fn test_draw_polygon2() {
         use crate::color;
-        use nalgebra_glm::vec2;
+        use glam::vec2;
 
         const WIDTH: usize = 800;
         const HEIGHT: usize = 800;
@@ -682,7 +677,7 @@ mod test {
         ];
         println!("mvp 变换后：");
         points.iter().for_each(|p| {
-            println!("{:?}", p.as_slice());
+            println!("{}", p);
         });
         println!();
 
@@ -694,7 +689,7 @@ mod test {
         }
         println!("齐次除法后：");
         points.iter().for_each(|p| {
-            println!("{:?}", p.as_slice());
+            println!("{}", p);
         });
         println!();
 
@@ -708,7 +703,7 @@ mod test {
         }
         println!("viewport 变换：");
         points.iter().for_each(|p| {
-            println!("{:?}", p.as_slice());
+            println!("{}", p);
         });
         println!();
     }

@@ -7,10 +7,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-nalgebra-glm = "0.17"
+glam = "0.21"
 minifb = "0.23"
 rgb = "0.8"
-scanner-rust = "2.0"
 anyhow = "1"
 tobj = "3.2"
 itertools = "0.10"
@@ -23,7 +22,7 @@ itertools = "0.10"
 # clap = "3.2.14"
 # fastrand = "1"
 # rand = "0.8.5"
-# rayon = "1.5.3"
+# rayon = "1.5"
 
 # indexmap = "1.9.1"
 # indexmap = { version = "1.9.1", features = ["serde", "rayon"] }
@@ -61,3 +60,5 @@ harness = false
 
 [profile.release]
 debug = true
+# lto = "fat"
+# codegen-units = 1

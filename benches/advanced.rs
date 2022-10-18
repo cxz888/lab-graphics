@@ -1,7 +1,7 @@
 use lab_graphics::{color, shader::EmptyShader, Rasterizer};
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use nalgebra_glm::vec2;
+use glam::vec2;
 
 pub fn criterion_benchmark(c: &mut Criterion) {
     let width = 800;

@@ -1,47 +1,27 @@
-use nalgebra_glm::{Mat4, Vec3};
+use glam::{Mat4, Vec3, Vec4};
 
 /// 绕 z 旋转变换，`r` 为旋转的角度，以弧度制表示
 #[rustfmt::skip]
 pub fn rotation_z(r: f32) -> Mat4 {
-    Mat4::new(
-        r.cos(), -r.sin(), 0., 0.,
-        r.sin(), r.cos(),0.,  0.,
-        0., 0., 1., 0.,
-        0., 0., 0., 1.,
-    )
+    Mat4::from_rotation_z(r)
 }
 
 /// 绕 x 旋转变换，`r` 为旋转的角度，以弧度制表示
 #[rustfmt::skip]
 pub fn rotation_x(r: f32) -> Mat4 {
-    Mat4::new(
-        1., 0., 0., 0.,
-        0., r.cos(),-r.sin(),  0.,
-        0., r.sin(), r.cos(), 0.,
-        0., 0., 0., 1.,
-    )
+    Mat4::from_rotation_x(r)
 }
 
 /// 缩放变换，三个参数分别为三个维度的缩放
 #[rustfmt::skip]
 pub fn scaling(x_scale: f32, y_scale:f32, z_scale:f32) -> Mat4 {
-    Mat4::new(
-        x_scale, 0., 0., 0.,
-        0., y_scale, 0., 0.,
-        0., 0., z_scale, 0.,
-        0., 0., 0., 1.,
-    )
+    Mat4::from_scale(Vec3::new(x_scale, y_scale, z_scale))
 }
 
 /// 平移变换，三个参数分别为三个维度的偏移值
 #[rustfmt::skip]
 pub fn tranlation(x_offset: f32, y_offset:f32, z_offset:f32) -> Mat4 {
-    Mat4::new(
-        1., 0., 0., x_offset,
-        0., 1., 0., y_offset,
-        0., 0., 1., z_offset,
-        0., 0., 0., 1.,
-    )
+    Mat4::from_translation(Vec3::new(x_offset, y_offset, z_offset))
 }
 
 /// 模型变换，将原始物体摆放到希望的位置上
@@ -57,13 +37,13 @@ pub fn view(eye_pos: Vec3, angle_alpha: f32, angle_beta: f32) -> Mat4 {
     let b = angle_beta.to_radians();
     let g = Vec3::new(-b.cos() * a.sin(), b.sin(), -b.cos() * a.cos());
     let t = Vec3::new(a.sin() * b.sin(), b.cos(), a.cos() * b.sin());
-    let g_t = g.cross(&t);
+    let g_t = g.cross(t);
     #[rustfmt::skip]
-    let r_view = Mat4::new(
-        g_t.x, g_t.y, g_t.z, 0.,
-        t.x, t.y, t.z, 0.,
-        -(g.x), -(g.y), -(g.z), 0.,
-        0., 0., 0., 1.,
+    let r_view = Mat4::from_cols(
+        Vec4::new(g_t.x, t.x, -g.x,0.),
+        Vec4::new(g_t.y, t.y, -g.y,0.),
+        Vec4::new(g_t.z, t.z, -g.z,0.),
+        Vec4::new(0., 0., 0.,1.),
     );
     r_view * t_view
 }
@@ -80,19 +60,32 @@ pub fn perspective(fovy: f32, aspect: f32, z_near: f32, z_far: f32) -> Mat4 {
     let t = -(fovy / 2.).tan() * zn;
     let r = aspect * t;
 
-    #[rustfmt::skip]
-    let ortho: Mat4 = Mat4::new(
-        1./r, 0., 0., 0.,
-        0., 1./t, 0., 0.,
-        0., 0., 2./(zn-zf), -(zn+zf)/(zn-zf),
-        0., 0., 0., 1.
-    );
-    #[rustfmt::skip]
-    let persp2ortho: Mat4 = Mat4::new(
-        zn, 0., 0., 0.,
-        0., zn, 0., 0.,
-        0., 0., zn+zf, -zn*zf,
-        0., 0., 1., 0.
+    let ortho = orthogonal(-r, r, -t, t, zf, zn);
+    let persp2ortho = Mat4::from_cols(
+        Vec4::new(zn, 0., 0., 0.),
+        Vec4::new(0., zn, 0., 0.),
+        Vec4::new(0., 0., zn + zf, 1.),
+        Vec4::new(0., 0., -zn * zf, 0.),
     );
     ortho * persp2ortho
+}
+
+/// 投影变换，投影结果位于 \[-1,1\]^3 的标准立方体之间。这里是正交投影。
+///
+/// l r b t n f
+///
+/// 注意在该种实现中，投影后的齐次坐标的 `w` 项是投影前的 `z` 坐标
+pub fn orthogonal(l: f32, r: f32, b: f32, t: f32, f: f32, n: f32) -> Mat4 {
+    let ortho = Mat4::from_cols(
+        Vec4::new(2. / (r - l), 0., 0., 0.),
+        Vec4::new(0., 2. / (t - b), 0., 0.),
+        Vec4::new(0., 0., 2. / (n - f), 0.),
+        Vec4::new(
+            -(r + l) / (r - l),
+            -(t + b) / (t - b),
+            -(n + f) / (n - f),
+            1.,
+        ),
+    );
+    ortho
 }

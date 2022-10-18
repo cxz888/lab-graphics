@@ -1,4 +1,4 @@
-use nalgebra_glm::{Mat4, Vec2, Vec3};
+use glam::{Mat4, Vec2, Vec3};
 use rgb::alt::BGRA8;
 use std::{fmt, path::Path};
 
@@ -88,7 +88,7 @@ impl Object {
                 let va = vertices[i] - vertices[j];
                 let vb = vertices[k] - vertices[j];
                 normal_indices.push([normals.len(), normals.len(), normals.len()]);
-                normals.push(va.cross(&vb).normalize());
+                normals.push(va.cross(vb).normalize());
             }
         }
         return Ok(Object {
