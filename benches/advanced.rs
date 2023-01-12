@@ -1,4 +1,8 @@
-use lab_graphics::{color, shader::EmptyShader, Rasterizer};
+use lab_graphics::{
+    color::{self, to_bgra},
+    shader::EmptyShader,
+    Rasterizer,
+};
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use glam::vec2;
@@ -44,11 +48,12 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         x += 20.;
         y = 250.;
     }
+    let color = to_bgra(color::RED);
 
     c.bench_function("draw polygon", |b| {
         b.iter(|| {
-            rst.draw_polygon(&vertices1, color::RED);
-            rst.draw_polygon(&vertices2, color::RED);
+            rst.draw_polygon(&vertices1, color);
+            rst.draw_polygon(&vertices2, color);
         });
     });
 }

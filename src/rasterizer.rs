@@ -1,12 +1,13 @@
 use crate::{
+    color,
     object::Object,
-    shader::{EmptyShader, Payload, Shader},
+    shader::{Payload, Shader},
     triangle::Triangle,
 };
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use rgb::alt::BGRA8;
 
-pub struct Rasterizer<S: Shader = EmptyShader> {
+pub struct Rasterizer<S> {
     width: usize,
     height: usize,
     frame_buf: Vec<BGRA8>,
@@ -49,8 +50,7 @@ impl<S: Shader> Rasterizer<S> {
 
     #[inline]
     pub fn get_index(&self, x: usize, y: usize) -> usize {
-        let index = (self.height - 1 - y) * self.width + x;
-        return index;
+        (self.height - 1 - y) * self.width + x
     }
 }
 
@@ -61,28 +61,45 @@ impl<S: Shader> Rasterizer<S> {
         for t_id in 0..object.indices.len() {
             let [i, j, k] = object.indices[t_id];
             let [ni, nj, nk] = object.normal_indices[t_id];
-            object.vertices[i].extend(1.);
+            let m_inv_t = object.model.inverse().transpose();
+            // 模型的世界坐标，一个客观的绝对坐标
             let model_pos = [
                 object.model * object.vertices[i].extend(1.),
                 object.model * object.vertices[j].extend(1.),
                 object.model * object.vertices[k].extend(1.),
             ];
+
+            // 在本应用的情况下，应当只需要考虑模型变换
+            let transform_normal = |n: Vec3| {
+                let n = n.extend(0.);
+                (m_inv_t * n).truncate()
+            };
             let mut t = Triangle {
+                // 渲染的三角形坐标采取 mvp 变换后的 NDC 坐标
                 v: [vp * model_pos[0], vp * model_pos[1], vp * model_pos[2]],
                 color: [
                     object.vertex_color[i],
                     object.vertex_color[j],
                     object.vertex_color[k],
                 ],
-                normal: [object.normals[ni], object.normals[nj], object.normals[nk]],
+                normal: [
+                    transform_normal(object.normals[ni]),
+                    transform_normal(object.normals[nj]),
+                    transform_normal(object.normals[nk]),
+                ],
                 ..Default::default()
             };
-            // 齐次除法将 (x,y) 限定在 [-1,1]
+            // 如果三角形有部分在视点之后，则放弃渲染，因为目前还没有做裁剪
+            if t.v.iter().any(|p| p.w >= 0.) {
+                continue;
+            }
+            // 齐次除法将 (x,y,z) 限定在 [-1,1]
             // 然后将 x、y 映射到屏幕坐标系上
             // w 没有进行齐次除法，因为按之前的计算这里的 w 保存了 mv 变换之后的真实 z 值
             for p in t.v.iter_mut() {
                 p.x = 0.5 * self.width as f32 * (p.x / p.w + 1.);
                 p.y = 0.5 * self.height as f32 * (p.y / p.w + 1.);
+                p.z /= p.w;
             }
             self.rasterize_triangle(&t, &model_pos);
         }
@@ -91,7 +108,6 @@ impl<S: Shader> Rasterizer<S> {
     ///
     /// 注意 `t` 的 x y 坐标已经表示为屏幕坐标
     fn rasterize_triangle(&mut self, t: &Triangle, model_pos: &[Vec4; 3]) {
-        // println!("{:?}", t.v);
         let bbox = t.bounding_box();
         let (left, top, right, bottom) = (
             (bbox.0 as usize).min(self.width - 1),
@@ -105,13 +121,10 @@ impl<S: Shader> Rasterizer<S> {
                 if !Triangle::inside_triangle(alpha, beta, gamma) {
                     continue;
                 }
-                // 透视校正插值
+                // 透视校正插值，在相机坐标系下与视平面的距离
                 let z = 1.0 / (alpha / t.v[0].w + beta / t.v[1].w + gamma / t.v[2].w);
-                fn to_vec3(color: BGRA8) -> Vec3 {
-                    Vec3::new(color.b as f32, color.g as f32, color.r as f32)
-                }
                 macro_rules! interp {
-                    ($p0:expr,$p1:expr,$p2:expr) => {
+                    ($p0:expr, $p1:expr, $p2:expr) => {
                         z * (alpha * $p0 / t.v[0].w
                             + beta * $p1 / t.v[1].w
                             + gamma * $p2 / t.v[2].w)
@@ -119,12 +132,9 @@ impl<S: Shader> Rasterizer<S> {
                 }
                 let index = self.get_index(px, py);
                 if self.depth_buf[index] < z {
-                    let interp_color: Vec3 = interp!(
-                        to_vec3(t.color[0]),
-                        to_vec3(t.color[1]),
-                        to_vec3(t.color[2])
-                    );
-                    let interp_normal: Vec3 = interp!(t.normal[0], t.normal[1], t.normal[2]);
+                    let interp_color: Vec3 = interp!(t.color[0], t.color[1], t.color[2]);
+                    let interp_normal: Vec3 =
+                        interp!(t.normal[0], t.normal[1], t.normal[2]).normalize();
                     let interp_texture: Vec2 = interp!(t.texture[0], t.texture[1], t.texture[2]);
                     let interp_model_pos: Vec4 = interp!(model_pos[0], model_pos[1], model_pos[2]);
                     let payload = Payload {
@@ -226,7 +236,7 @@ impl<S: Shader> Rasterizer<S> {
                             x0 -= 1;
                             index -= 1;
                         }
-                        d = d + 2 * (dx_abs - dy_abs);
+                        d += 2 * (dx_abs - dy_abs);
                     }
                 }
             } else {
@@ -243,7 +253,7 @@ impl<S: Shader> Rasterizer<S> {
                     x0 += 1;
                     index += 1;
                     if d < 0 {
-                        d = d + 2 * dy_abs;
+                        d += 2 * dy_abs;
                     } else {
                         if (dx < 0 && dy < 0) || (dx > 0 && dy > 0) {
                             y0 += 1;
@@ -252,7 +262,7 @@ impl<S: Shader> Rasterizer<S> {
                             y0 -= 1;
                             index += rst.width;
                         }
-                        d = d + 2 * (dy_abs - dx_abs);
+                        d += 2 * (dy_abs - dx_abs);
                     }
                 }
             }
@@ -323,11 +333,13 @@ impl<S: Shader> Rasterizer<S> {
         // bresenham(self, from, to, color);
     }
 
-    pub fn draw_crosshair(&mut self, size: usize, color: BGRA8) {
+    pub fn draw_crosshair(&mut self, size: usize, color: Vec3) {
         let cx = self.width / 2;
         let cy = self.height / 2;
         let lx = cx - size / 2;
         let dy = cy - size / 2;
+        let color = color::to_bgra(color);
+
         for x in lx..(lx + size) {
             self.set_pixel(x, cy - 1, color);
             self.set_pixel(x, cy, color);
@@ -426,7 +438,7 @@ impl<S: Shader> Rasterizer<S> {
                         continue;
                     }
                     let alpha = (y as f32 - p2.y) / (p1.y - p2.y);
-                    if 0. <= alpha && alpha <= 1. {
+                    if (0. ..=1.).contains(&alpha) {
                         let x = alpha * p1.x + (1. - alpha) * p2.x;
                         // 元组第 1 维保存交点 x 坐标
                         //    第 2 维记录交点是在边的上半段还是下半段
@@ -504,7 +516,7 @@ impl<S: Shader> Rasterizer<S> {
                 k_r: f32,
             }
             let y_min = edges[edges.len() - 1].from.y as usize;
-            let y_max = vert.into_iter().max_by_key(|e| e.y as usize).unwrap().y as usize;
+            let y_max = vert.iter().max_by_key(|e| e.y as usize).unwrap().y as usize;
             let mut aet: Vec<ActiveEdge> = Vec::with_capacity(2);
             for y in y_min..y_max {
                 // 把所有恰好进入扫描线范围的边加入 AET
@@ -552,7 +564,11 @@ mod test {
     const WIDTH: usize = 800;
     const HEIGHT: usize = 800;
     use super::*;
-    use crate::{color, transform};
+    use crate::{
+        color::{self, to_bgra},
+        shader::EmptyShader,
+        transform,
+    };
 
     fn show(buffer: &[u32]) {
         use minifb::{Key, Window, WindowOptions};
@@ -574,18 +590,18 @@ mod test {
 
         let p0 = vec2(400., 400.);
 
-        rst.draw_line(p0, vec2(700., 600.), color::GREEN);
-        rst.draw_line(p0, vec2(600., 700.), color::GREEN);
-        rst.draw_line(p0, vec2(400., 750.), color::GREEN);
-        rst.draw_line(p0, vec2(200., 700.), color::GREEN);
-        rst.draw_line(p0, vec2(100., 600.), color::GREEN);
-        rst.draw_line(p0, vec2(50., 400.), color::GREEN);
-        rst.draw_line(p0, vec2(100., 200.), color::GREEN);
-        rst.draw_line(p0, vec2(200., 100.), color::GREEN);
-        rst.draw_line(p0, vec2(400., 50.), color::GREEN);
-        rst.draw_line(p0, vec2(600., 100.), color::GREEN);
-        rst.draw_line(p0, vec2(700., 200.), color::GREEN);
-        rst.draw_line(p0, vec2(750., 400.), color::GREEN);
+        rst.draw_line(p0, vec2(700., 600.), to_bgra(color::GREEN));
+        rst.draw_line(p0, vec2(600., 700.), to_bgra(color::GREEN));
+        rst.draw_line(p0, vec2(400., 750.), to_bgra(color::GREEN));
+        rst.draw_line(p0, vec2(200., 700.), to_bgra(color::GREEN));
+        rst.draw_line(p0, vec2(100., 600.), to_bgra(color::GREEN));
+        rst.draw_line(p0, vec2(50., 400.), to_bgra(color::GREEN));
+        rst.draw_line(p0, vec2(100., 200.), to_bgra(color::GREEN));
+        rst.draw_line(p0, vec2(200., 100.), to_bgra(color::GREEN));
+        rst.draw_line(p0, vec2(400., 50.), to_bgra(color::GREEN));
+        rst.draw_line(p0, vec2(600., 100.), to_bgra(color::GREEN));
+        rst.draw_line(p0, vec2(700., 200.), to_bgra(color::GREEN));
+        rst.draw_line(p0, vec2(750., 400.), to_bgra(color::GREEN));
         show(rst.data());
     }
 
@@ -602,7 +618,7 @@ mod test {
             vec2(150., 400.),
             vec2(100., 300.),
         ];
-        rst.draw_polygon(&vertices, color::WHITE);
+        rst.draw_polygon(&vertices, to_bgra(color::WHITE));
         let vertices = [
             vec2(500., 500.),
             vec2(450., 470.),
@@ -618,7 +634,7 @@ mod test {
             vec2(630., 400.),
             vec2(480., 430.),
         ];
-        rst.draw_polygon(&vertices, color::RED);
+        rst.draw_polygon(&vertices, to_bgra(color::RED));
         show(rst.data());
     }
 
@@ -654,7 +670,7 @@ mod test {
             x += 20.;
             y = 250.;
         }
-        rst.draw_polygon(&vertices, color::RED);
+        rst.draw_polygon(&vertices, to_bgra(color::RED));
         show(rst.data());
     }
 
@@ -667,7 +683,7 @@ mod test {
 
         let mvp = transform::perspective(45., 1., z_near, z_far)
             * transform::view(Vec3::new(0., 0., 5.), 0., 0.)
-            * transform::model(0., 0., 0., 2.5);
+            * transform::model(0., 0., 0., 0., 2.5);
 
         // mvp 变换
         let mut points = [

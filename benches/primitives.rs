@@ -1,4 +1,8 @@
-use lab_graphics::{color, shader::EmptyShader, Rasterizer};
+use lab_graphics::{
+    color::{self, to_bgra},
+    shader::EmptyShader,
+    Rasterizer,
+};
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use glam::vec2;
@@ -13,7 +17,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     let to2 = vec2(50.0, 700.0);
     let from3 = vec2(0.0, 300.0);
     let to3 = vec2(400.0, 0.0);
-    let color = color::RED;
+    let color = to_bgra(color::RED);
     c.bench_function("draw_line DDA", |b| {
         b.iter(|| {
             rst.draw_line(from1, to1, color);

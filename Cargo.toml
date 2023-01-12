@@ -1,13 +1,13 @@
 [package]
 name = "lab-graphics"
 version = "0.1.0"
-authors = [ "cxz888 <idlercloud@gmail.com>" ]
+authors = ["cxz888 <idlercloud@gmail.com>"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-glam = "0.21"
+glam = "0.22"
 minifb = "0.23"
 rgb = "0.8"
 anyhow = "1"

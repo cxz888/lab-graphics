@@ -4,7 +4,7 @@ use lab_graphics::{
     transform, Rasterizer,
 };
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use glam::Vec3;
 
 pub fn criterion_benchmark(c: &mut Criterion) {
@@ -12,15 +12,15 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     let height = 800;
     let z_near = 0.1;
     let z_far = 50.;
-    let tetra = Object::load_obj("model/tetrahedron.obj")
+    let tetra = Object::load_obj("../model/tetrahedron.obj")
         .unwrap()
-        .model(transform::model(0., 0., 0., 1.));
-    let spot = Object::load_obj("model/spot_triangulated_good.obj")
+        .model(transform::model(0., 0., 0., 0., 1.));
+    let spot = Object::load_obj("../model/spot_triangulated_good.obj")
         .unwrap()
-        .model(transform::model(0., 0., 0., 2.5));
-    let cube = Object::load_obj("model/cube.obj")
+        .model(transform::model(0., 0., 0., 0., 2.5));
+    let cube = Object::load_obj("../model/cube.obj")
         .unwrap()
-        .model(transform::model(-20., 0., 0., 1.0));
+        .model(transform::model(-20., 0., 0., 0., 1.0));
     let objects = vec![tetra, spot, cube];
 
     let eye_pos = Vec3::new(28., 21., 35.34);
@@ -56,7 +56,6 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                 intensity: Vec3::new(400., 400., 400.),
             },
         ];
-        let diffuse_coeff = Vec3::new(0.005, 0.005, 0.005);
         let amb_coeff = Vec3::new(0.005, 0.005, 0.005);
         let amb_intensity = Vec3::new(10., 10., 10.);
         let spec_coeff = Vec3::new(0.9, 0.9, 0.9);
@@ -65,7 +64,6 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         let phong_shader = PhongShader::new(
             eye_pos,
             lights,
-            diffuse_coeff,
             amb_coeff,
             amb_intensity,
             spec_coeff,

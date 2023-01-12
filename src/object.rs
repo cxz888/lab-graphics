@@ -1,11 +1,10 @@
-use glam::{Mat4, Vec2, Vec3};
-use rgb::alt::BGRA8;
+use glam::{vec3, Mat4, Vec2, Vec3};
 use std::{fmt, path::Path};
 
 #[derive(Debug)]
 pub struct Object {
     pub vertices: Vec<Vec3>,
-    pub vertex_color: Vec<BGRA8>,
+    pub vertex_color: Vec<Vec3>,
     pub normals: Vec<Vec3>,
     pub texcoords: Vec<Vec2>,
     pub indices: Vec<[usize; 3]>,
@@ -35,19 +34,13 @@ impl Object {
                 mesh.positions[3 * i + 2],
             ));
             vertex_color.push(if 3 * i + 2 < mesh.vertex_color.len() {
-                BGRA8 {
-                    b: mesh.vertex_color[3 * i] as u8,
-                    g: mesh.vertex_color[3 * i + 1] as u8,
-                    r: mesh.vertex_color[3 * i + 2] as u8,
-                    a: 0,
-                }
+                vec3(
+                    mesh.vertex_color[3 * i],
+                    mesh.vertex_color[3 * i + 1],
+                    mesh.vertex_color[3 * i + 2],
+                )
             } else {
-                BGRA8 {
-                    b: 92,
-                    g: 121,
-                    r: 148,
-                    a: 0,
-                }
+                vec3(0.361, 0.4745, 0.5804)
             });
         }
         for i in 0..mesh.normals.len() / 3 {
@@ -83,7 +76,8 @@ impl Object {
                 mesh.texcoord_indices[2 * i + 1] as usize,
             ]);
         }
-        if normals.len() == 0 {
+        // 生成的模型中不包含法向量，则自动根据三个顶点为其生成
+        if normals.is_empty() {
             for [i, j, k] in indices.iter().copied() {
                 let va = vertices[i] - vertices[j];
                 let vb = vertices[k] - vertices[j];
@@ -91,7 +85,7 @@ impl Object {
                 normals.push(va.cross(vb).normalize());
             }
         }
-        return Ok(Object {
+        Ok(Object {
             vertices,
             vertex_color,
             normals,
@@ -100,7 +94,7 @@ impl Object {
             normal_indices,
             texcoord_indices,
             model: Default::default(),
-        });
+        })
     }
     pub fn model(mut self, model: Mat4) -> Self {
         self.model = model;
