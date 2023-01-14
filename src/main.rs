@@ -2,10 +2,10 @@
 
 use lab_graphics::object::Object;
 use lab_graphics::rasterizer::Rasterizer;
-use lab_graphics::shader::{light, PhongShader};
+use lab_graphics::shaders::{BlinnPhongShader, BumpShader, DisplacementShader, TextureShader};
 use lab_graphics::{color, transform};
 
-use glam::{vec3, Vec3};
+use glam::Vec3;
 use minifb::{Key, MouseMode, Window, WindowOptions};
 
 const WIDTH: usize = 700;
@@ -73,37 +73,26 @@ fn respond_keyboard(
 }
 
 fn main() {
+    // NOTE: 可能是因为选取的坐标系和法向量变幻的方法不同，normal、bump、displacement 的效果和参考的不太一致
+
     let z_near = 0.1;
     let z_far = 50.;
-    let lights = vec![
-        light(vec3(20., 20., 20.), vec3(500., 500., 500.)),
-        light(vec3(-20., 20., 0.), vec3(500., 500., 500.)),
-    ];
-    // 环境
-    let amb_coeff = vec3(0.005, 0.005, 0.005);
-    let amb_intensity = vec3(10., 10., 10.);
-    let spec_coeff = vec3(0.7937, 0.7937, 0.7937);
-    let spec_exp = 150;
 
     // 相机位置、水平角和仰角。
     let mut eye_pos = Vec3::new(0., 0., 10.);
     let mut angle_alpha = 0.;
     let mut angle_beta = 0.;
 
-    let phong_shader = PhongShader::new(
-        eye_pos,
-        lights,
-        amb_coeff,
-        amb_intensity,
-        spec_coeff,
-        spec_exp,
-    );
+    let _phong_shader = BlinnPhongShader::example(eye_pos);
+    let _texture_shader = TextureShader::example(eye_pos);
+    let _bump_shader = BumpShader::new(eye_pos);
+    let displacement_shader = DisplacementShader::example(eye_pos);
 
-    let mut rst = Rasterizer::new(WIDTH, HEIGHT, phong_shader);
+    let mut rst = Rasterizer::new(WIDTH, HEIGHT, displacement_shader);
     rst.view(transform::view(eye_pos, angle_alpha, angle_beta))
         .projection(transform::perspective(45., 1., z_near, z_far));
 
-    let spot = Object::load_obj("model/spot_triangulated_good.obj")
+    let spot = Object::load_obj("model/spot_triangulated_good.obj", "model/hmap.jpg")
         .unwrap()
         .model(transform::model(0., 0., 0., 140., 2.5));
     let objects = vec![spot];
@@ -125,66 +114,6 @@ fn main() {
             .unwrap();
 
         respond_keyboard(&window, &mut eye_pos, &mut angle_alpha, &mut angle_beta);
-        // rst.shader.eye_pos(eye_pos);
-    }
-}
-
-#[cfg(test)]
-#[test]
-fn test_mvp() {
-    use glam::{Mat4, Vec4};
-    use lab_graphics::shader::EmptyShader;
-
-    let z_near = 0.1;
-    let z_far = 50.;
-
-    // 相机位置、水平角和仰角。
-    let mut eye_pos = Vec3::new(0., 0., 0.);
-    let mut angle_alpha = 0.;
-    let mut angle_beta = 0.;
-
-    let mut rst = Rasterizer::new(WIDTH, HEIGHT, EmptyShader);
-    rst.view(transform::view(eye_pos, angle_alpha, angle_beta))
-        .projection(transform::perspective(45., 1., z_near, z_far));
-
-    let mut window = Window::new("Graphic Lab", WIDTH, HEIGHT, WindowOptions::default()).unwrap();
-
-    let p0 = Vec3::new(-1., 1., 5.);
-    let p1 = Vec3::new(1., 1., 5.);
-    let p2 = Vec3::new(0., -1., 15.);
-
-    let obj = Object {
-        vertices: vec![p0, p1, p2],
-        vertex_color: vec![color::WHITE, color::WHITE, color::WHITE],
-        normals: vec![
-            Vec3::new(1.0, 1.0, 1.0),
-            Vec3::new(1.0, 1.0, 1.0),
-            Vec3::new(1.0, 1.0, 1.0),
-        ],
-        texcoords: Vec::new(),
-        indices: vec![[0, 1, 2]],
-        normal_indices: vec![[0, 1, 2]],
-        texcoord_indices: Vec::new(),
-        model: Mat4::IDENTITY,
-    };
-
-    fn test(mut p: Vec4) {
-        let project = transform::perspective(45., 1., 0.1, 50.);
-        p = project * p;
-        println!("裁剪坐标：{}", p);
-        p /= p.w;
-        println!("齐次除法：{}\n", p);
-    }
-
-    test(p0.extend(1.));
-    test(p1.extend(1.));
-    test(p2.extend(1.));
-    while window.is_open() && !window.is_key_down(Key::Escape) {
-        rst.clear();
-        rst.draw(&obj);
-
-        window
-            .update_with_buffer(rst.data(), WIDTH, HEIGHT)
-            .unwrap();
+        rst.shader.eye_pos(eye_pos);
     }
 }

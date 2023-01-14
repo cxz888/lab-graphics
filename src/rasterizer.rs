@@ -1,7 +1,8 @@
 use crate::{
     color,
     object::Object,
-    shader::{Payload, Shader},
+    shaders::{Payload, Shader},
+    texture::Texture,
     triangle::Triangle,
 };
 use glam::{Mat4, Vec2, Vec3, Vec4};
@@ -61,6 +62,7 @@ impl<S: Shader> Rasterizer<S> {
         for t_id in 0..object.indices.len() {
             let [i, j, k] = object.indices[t_id];
             let [ni, nj, nk] = object.normal_indices[t_id];
+            let [ti, tj, tk] = object.texcoord_indices[t_id];
             let m_inv_t = object.model.inverse().transpose();
             // 模型的世界坐标，一个客观的绝对坐标
             let model_pos = [
@@ -87,7 +89,11 @@ impl<S: Shader> Rasterizer<S> {
                     transform_normal(object.normals[nj]),
                     transform_normal(object.normals[nk]),
                 ],
-                ..Default::default()
+                texture: [
+                    object.texcoords[ti],
+                    object.texcoords[tj],
+                    object.texcoords[tk],
+                ],
             };
             // 如果三角形有部分在视点之后，则放弃渲染，因为目前还没有做裁剪
             if t.v.iter().any(|p| p.w >= 0.) {
@@ -101,13 +107,13 @@ impl<S: Shader> Rasterizer<S> {
                 p.y = 0.5 * self.height as f32 * (p.y / p.w + 1.);
                 p.z /= p.w;
             }
-            self.rasterize_triangle(&t, &model_pos);
+            self.rasterize_triangle(&t, &object.texture, &model_pos);
         }
     }
     /// 将 3D 三角形光栅化到屏幕上。
     ///
     /// 注意 `t` 的 x y 坐标已经表示为屏幕坐标
-    fn rasterize_triangle(&mut self, t: &Triangle, model_pos: &[Vec4; 3]) {
+    fn rasterize_triangle(&mut self, t: &Triangle, texture: &Texture, model_pos: &[Vec4; 3]) {
         let bbox = t.bounding_box();
         let (left, top, right, bottom) = (
             (bbox.0 as usize).min(self.width - 1),
@@ -132,18 +138,18 @@ impl<S: Shader> Rasterizer<S> {
                 }
                 let index = self.get_index(px, py);
                 if self.depth_buf[index] < z {
-                    let interp_color: Vec3 = interp!(t.color[0], t.color[1], t.color[2]);
-                    let interp_normal: Vec3 =
-                        interp!(t.normal[0], t.normal[1], t.normal[2]).normalize();
-                    let interp_texture: Vec2 = interp!(t.texture[0], t.texture[1], t.texture[2]);
-                    let interp_model_pos: Vec4 = interp!(model_pos[0], model_pos[1], model_pos[2]);
+                    let interp_color = interp!(t.color[0], t.color[1], t.color[2]);
+                    let interp_normal = interp!(t.normal[0], t.normal[1], t.normal[2]).normalize();
+                    let interp_tex_coords = interp!(t.texture[0], t.texture[1], t.texture[2]);
+                    let interp_model_pos = interp!(model_pos[0], model_pos[1], model_pos[2]);
                     let payload = Payload {
                         color: interp_color,
                         normal: interp_normal,
                         point: interp_model_pos.truncate(),
-                        tex_coords: interp_texture,
+                        tex_coords: interp_tex_coords,
+                        texture,
                     };
-                    let color = self.shader.shading(&payload);
+                    let color = self.shader.shading(payload);
 
                     self.depth_buf[index] = z;
                     self.frame_buf[index] = color;
@@ -556,171 +562,5 @@ impl<S: Shader> Rasterizer<S> {
         }
         // x_scan(self, vertices, color);
         aet(self, vertices, color);
-    }
-}
-
-#[cfg(test)]
-mod test {
-    const WIDTH: usize = 800;
-    const HEIGHT: usize = 800;
-    use super::*;
-    use crate::{
-        color::{self, to_bgra},
-        shader::EmptyShader,
-        transform,
-    };
-
-    fn show(buffer: &[u32]) {
-        use minifb::{Key, Window, WindowOptions};
-        let mut window = Window::new("test", WIDTH, HEIGHT, WindowOptions::default()).unwrap();
-        window.limit_update_rate(Some(std::time::Duration::from_micros(16600)));
-        while window.is_open() && !window.is_key_down(Key::Escape) {
-            window.update_with_buffer(buffer, WIDTH, HEIGHT).unwrap();
-        }
-    }
-
-    #[test]
-    fn test_draw_line() {
-        use glam::vec2;
-
-        const WIDTH: usize = 800;
-        const HEIGHT: usize = 800;
-
-        let mut rst = Rasterizer::new(WIDTH, HEIGHT, EmptyShader);
-
-        let p0 = vec2(400., 400.);
-
-        rst.draw_line(p0, vec2(700., 600.), to_bgra(color::GREEN));
-        rst.draw_line(p0, vec2(600., 700.), to_bgra(color::GREEN));
-        rst.draw_line(p0, vec2(400., 750.), to_bgra(color::GREEN));
-        rst.draw_line(p0, vec2(200., 700.), to_bgra(color::GREEN));
-        rst.draw_line(p0, vec2(100., 600.), to_bgra(color::GREEN));
-        rst.draw_line(p0, vec2(50., 400.), to_bgra(color::GREEN));
-        rst.draw_line(p0, vec2(100., 200.), to_bgra(color::GREEN));
-        rst.draw_line(p0, vec2(200., 100.), to_bgra(color::GREEN));
-        rst.draw_line(p0, vec2(400., 50.), to_bgra(color::GREEN));
-        rst.draw_line(p0, vec2(600., 100.), to_bgra(color::GREEN));
-        rst.draw_line(p0, vec2(700., 200.), to_bgra(color::GREEN));
-        rst.draw_line(p0, vec2(750., 400.), to_bgra(color::GREEN));
-        show(rst.data());
-    }
-
-    #[test]
-    fn test_draw_polygon1() {
-        use crate::color;
-        use glam::vec2;
-
-        let mut rst = Rasterizer::new(WIDTH, HEIGHT, EmptyShader);
-
-        let vertices = [
-            vec2(10., 10.),
-            vec2(200., 100.),
-            vec2(150., 400.),
-            vec2(100., 300.),
-        ];
-        rst.draw_polygon(&vertices, to_bgra(color::WHITE));
-        let vertices = [
-            vec2(500., 500.),
-            vec2(450., 470.),
-            vec2(400., 400.),
-            vec2(300., 360.),
-            vec2(340., 100.),
-            vec2(420., 240.),
-            vec2(460., 120.),
-            vec2(530., 180.),
-            vec2(520., 50.),
-            vec2(670., 280.),
-            vec2(480., 240.),
-            vec2(630., 400.),
-            vec2(480., 430.),
-        ];
-        rst.draw_polygon(&vertices, to_bgra(color::RED));
-        show(rst.data());
-    }
-
-    #[test]
-    fn test_draw_polygon2() {
-        use crate::color;
-        use glam::vec2;
-
-        const WIDTH: usize = 800;
-        const HEIGHT: usize = 800;
-
-        let mut rst = Rasterizer::new(WIDTH, HEIGHT, EmptyShader);
-
-        let mut vertices = Vec::with_capacity(100);
-        vertices.push(vec2(600., 300.));
-        let mut x = 550.;
-        let mut y = 600.;
-        while x > 50. {
-            vertices.push(vec2(x, y));
-            x -= 20.;
-            y = 350.;
-            vertices.push(vec2(x, y));
-            x -= 20.;
-            y = 600.;
-        }
-        vertices.push(vec2(50., 300.));
-        y = 250.0;
-        while x < 550. {
-            vertices.push(vec2(x, y));
-            x += 20.;
-            y = 50.;
-            vertices.push(vec2(x, y));
-            x += 20.;
-            y = 250.;
-        }
-        rst.draw_polygon(&vertices, to_bgra(color::RED));
-        show(rst.data());
-    }
-
-    #[test]
-    fn test_interplote() {
-        let width = 800;
-        let height = 800;
-        let z_near = 0.1;
-        let z_far = 50.;
-
-        let mvp = transform::perspective(45., 1., z_near, z_far)
-            * transform::view(Vec3::new(0., 0., 5.), 0., 0.)
-            * transform::model(0., 0., 0., 0., 2.5);
-
-        // mvp 变换
-        let mut points = [
-            mvp * Vec4::new(-2., 2., -2., 1.),
-            mvp * Vec4::new(2., 2., -2., 1.),
-            mvp * Vec4::new(0., 0., -5., 1.),
-        ];
-        println!("mvp 变换后：");
-        points.iter().for_each(|p| {
-            println!("{}", p);
-        });
-        println!();
-
-        // 齐次除法
-        for p in points.iter_mut() {
-            p.x /= p.w;
-            p.y /= p.w;
-            p.z /= p.w;
-        }
-        println!("齐次除法后：");
-        points.iter().for_each(|p| {
-            println!("{}", p);
-        });
-        println!();
-
-        // viewport 变换
-        let f1 = (z_far - z_near) / 2.;
-        let f2 = -(z_far + z_near) / 2.;
-        for p in points.iter_mut() {
-            p.x = 0.5 * (p.x + 1.) * width as f32;
-            p.y = 0.5 * (p.y + 1.) * height as f32;
-            p.z = p.w * f1 + f2;
-        }
-        println!("viewport 变换：");
-        points.iter().for_each(|p| {
-            println!("{}", p);
-        });
-        println!();
     }
 }
