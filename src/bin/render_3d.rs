@@ -1,5 +1,3 @@
-#![cfg_attr(test, allow(unused))]
-
 use lab_graphics::object::Object;
 use lab_graphics::rasterizer::Rasterizer;
 use lab_graphics::shaders::{BlinnPhongShader, BumpShader, DisplacementShader, TextureShader};
@@ -86,13 +84,13 @@ fn main() {
     let _phong_shader = BlinnPhongShader::example(eye_pos);
     let _texture_shader = TextureShader::example(eye_pos);
     let _bump_shader = BumpShader::new(eye_pos);
-    let displacement_shader = DisplacementShader::example(eye_pos);
+    let _displacement_shader = DisplacementShader::example(eye_pos);
 
-    let mut rst = Rasterizer::new(WIDTH, HEIGHT, displacement_shader);
+    let mut rst = Rasterizer::new(WIDTH, HEIGHT, _texture_shader);
     rst.view(transform::view(eye_pos, angle_alpha, angle_beta))
         .projection(transform::perspective(45., 1., z_near, z_far));
 
-    let spot = Object::load_obj("model/spot_triangulated_good.obj", "model/hmap.jpg")
+    let spot = Object::load_obj("model/spot_triangulated_good.obj", "model/spot_texture.png")
         .unwrap()
         .model(transform::model(0., 0., 0., 140., 2.5));
     let objects = vec![spot];
